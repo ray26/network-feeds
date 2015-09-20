@@ -7,7 +7,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=minivtun
-PKG_VERSION:=20150410
+PKG_VERSION:=20150909
 PKG_RELEASE=$(PKG_SOURCE_VERSION)
 
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
@@ -15,7 +15,7 @@ PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.bz2
 PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
 PKG_SOURCE_URL:=https://github.com/rssnsj/minivtun.git
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_VERSION:=2f928c83a0c1e46776fdbf5518c6fc73e80cad68
+PKG_SOURCE_VERSION:=14162cc12c008bc183f73566813a4fc8ccf0e664
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -24,7 +24,7 @@ define Package/minivtun
   TITLE:=Non-standard VPN that helps you to get through firewalls
   URL:=https://github.com/rssnsj/network-feeds
   MAINTAINER:=Justin Liu <rssnsj@gmail.com>
-  DEPENDS:=+ipset-lists +kmod-tun +libopenssl +luci
+  DEPENDS:=+ip +ipset-lists +kmod-tun +libopenssl +luci
 endef
 
 define Package/minivtun/conffiles
@@ -40,8 +40,13 @@ define Package/minivtun/install
 	mkdir -p $(1)/usr/sbin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/src/minivtun $(1)/usr/sbin
 	$(CP) -a files/* $(1)/
-	mkdir -p $(1)/usr/lib/lua/luci/i18n
-	$(BUILD_DIR)/luci/build/po2lmo po/zh_CN/minivtun.po $(1)/usr/lib/lua/luci/i18n/minivtun.zh-cn.lmo || :
+endef
+
+define Package/minivtun/postinst
+#!/bin/sh
+if [ -e /etc/openwrt_release ]; then
+	/etc/init.d/minivtun.sh enable || :
+fi
 endef
 
 $(eval $(call BuildPackage,minivtun))

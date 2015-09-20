@@ -5,23 +5,23 @@
 
 include $(TOPDIR)/rules.mk
 
-PKG_NAME:=ipset-lists
-PKG_VERSION:=20150909
+PKG_NAME:=dnspod-utils
+PKG_VERSION:=20150526
 PKG_RELEASE:=
 
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
 include $(INCLUDE_DIR)/package.mk
 
-define Package/ipset-lists
+define Package/dnspod-utils
   CATEGORY:=Network
-  TITLE:=Service for IPSET address tables
+  TITLE:=DNSPod dynamic DNS support
   MAINTAINER:=Justin Liu <rssnsj@gmail.com>
-  DEPENDS:=+ipset +luci
+  DEPENDS:=+luci-lib-json
 endef
 
-define Package/ipset-lists/conffiles
-/etc/gfwlist/china-banned
+define Package/dnspod-utils/conffiles
+/etc/config/dnspod
 endef
 
 define Build/Prepare
@@ -33,16 +33,8 @@ define Build/Compile/Default
 endef
 Build/Compile = $(Build/Compile/Default)
 
-define Package/ipset-lists/install
+define Package/dnspod-utils/install
 	$(CP) -a files/* $(1)/
 endef
 
-define Package/ipset-lists/postinst
-#!/bin/sh
-if [ -e /etc/openwrt_release ]; then
-	/etc/init.d/ipset.sh restart
-	/etc/init.d/ipset.sh enable || :
-fi
-endef
-
-$(eval $(call BuildPackage,ipset-lists))
+$(eval $(call BuildPackage,dnspod-utils))

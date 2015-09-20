@@ -14,22 +14,33 @@ START=96
 
 SS_REDIR_PORT=7070
 SS_REDIR_PIDFILE=/var/run/ss-redir-go.pid 
-DNSMASQ_PORT=7053
-DNSMASQ_PIDFILE=/var/run/dnsmasq-go.pid
 PDNSD_LOCAL_PORT=7453
+
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+# New implementation:
+# Attach rules to main 'dnsmasq' service and restart it.
+
+__gfwlist_by_mode()
+{
+	case "$1" in
+		V) echo unblock-youku;;
+		*) echo china-banned;;
+	esac
+}
 
 start()
 {
-	local ss_enabled=`uci get shadowsocks.@shadowsocks[0].enabled 2>/dev/null`
-	local ss_server_addr=`uci get shadowsocks.@shadowsocks[0].server`
-	local ss_server_port=`uci get shadowsocks.@shadowsocks[0].server_port`
-	local ss_password=`uci get shadowsocks.@shadowsocks[0].password 2>/dev/null`
-	local ss_method=`uci get shadowsocks.@shadowsocks[0].method`
-	local ss_timeout=`uci get shadowsocks.@shadowsocks[0].timeout 2>/dev/null`
-	local ss_safe_dns=`uci get shadowsocks.@shadowsocks[0].safe_dns 2>/dev/null`
-	local ss_safe_dns_port=`uci get shadowsocks.@shadowsocks[0].safe_dns_port 2>/dev/null`
-	local ss_safe_dns_tcp=`uci get shadowsocks.@shadowsocks[0].safe_dns_tcp 2>/dev/null`
-	local ss_proxy_mode=`uci get shadowsocks.@shadowsocks[0].proxy_mode`
+	local vt_enabled=`uci get shadowsocks.@shadowsocks[0].enabled 2>/dev/null`
+	local vt_server_addr=`uci get shadowsocks.@shadowsocks[0].server`
+	local vt_server_port=`uci get shadowsocks.@shadowsocks[0].server_port`
+	local vt_password=`uci get shadowsocks.@shadowsocks[0].password 2>/dev/null`
+	local vt_method=`uci get shadowsocks.@shadowsocks[0].method`
+	local vt_timeout=`uci get shadowsocks.@shadowsocks[0].timeout 2>/dev/null`
+	local vt_safe_dns=`uci get shadowsocks.@shadowsocks[0].safe_dns 2>/dev/null`
+	local vt_safe_dns_port=`uci get shadowsocks.@shadowsocks[0].safe_dns_port 2>/dev/null`
+	local vt_safe_dns_tcp=`uci get shadowsocks.@shadowsocks[0].safe_dns_tcp 2>/dev/null`
+	local vt_proxy_mode=`uci get shadowsocks.@shadowsocks[0].proxy_mode`
 	# $covered_subnets, $local_addresses are not required
 	local covered_subnets=`uci get shadowsocks.@shadowsocks[0].covered_subnets 2>/dev/null`
 	local local_addresses=`uci get shadowsocks.@shadowsocks[0].local_addresses 2>/dev/null`
@@ -37,31 +48,37 @@ start()
 	/etc/init.d/pdnsd disable 2>/dev/null
 
 	# -----------------------------------------------------------------
-	if [ "$ss_enabled" = 0 ]; then
+	if [ "$vt_enabled" = 0 ]; then
 		echo "WARNING: Shadowsocks is disabled."
 		return 1
 	fi
 
-	if [ -z "$ss_server_addr" -o -z "$ss_server_port" ]; then
+	if [ -z "$vt_server_addr" -o -z "$vt_server_port" ]; then
 		echo "WARNING: Shadowsocks not fully configured, not starting."
 		return 1
 	fi
 
-	[ -z "$ss_proxy_mode" ] && ss_proxy_mode=S
-	[ -z "$ss_method" ] && ss_method=table
-	[ -z "$ss_timeout" ] && ss_timeout=60
-	[ -z "$ss_safe_dns_port" ] && ss_safe_dns_port=53
+	[ -z "$vt_proxy_mode" ] && vt_proxy_mode=M
+	[ -z "$vt_method" ] && vt_method=table
+	[ -z "$vt_timeout" ] && vt_timeout=60
+	case "$vt_proxy_mode" in
+		M|S|G)
+			[ -z "$vt_safe_dns" ] && vt_safe_dns="8.8.8.8"
+			[ -z "$vt_safe_dns_tcp" ] && vt_safe_dns_tcp=1
+			;;
+	esac
+	[ -z "$vt_safe_dns_port" ] && vt_safe_dns_port=53
 	# Get LAN settings as default parameters
 	[ -f /lib/functions/network.sh ] && . /lib/functions/network.sh
 	[ -z "$covered_subnets" ] && network_get_subnet covered_subnets lan
 	[ -z "$local_addresses" ] && network_get_ipaddr local_addresses lan
-	local ss_gfwlist="china-banned"
-	ss_np_ipset="china"  # Must be global variable
+	local vt_gfwlist=`__gfwlist_by_mode $vt_proxy_mode`
+	vt_np_ipset="china"  # Must be global variable
 
 	# -----------------------------------------------------------------
 	###### shadowsocks ######
-	ss-redir -b:: -l$SS_REDIR_PORT -s$ss_server_addr -p$ss_server_port \
-		-k"$ss_password" -m$ss_method -t$ss_timeout -f $SS_REDIR_PIDFILE || return 1
+	/usr/bin/ss-redir -b0.0.0.0 -l$SS_REDIR_PORT -s$vt_server_addr -p$vt_server_port \
+		-k"$vt_password" -m$vt_method -t$vt_timeout -f $SS_REDIR_PIDFILE || return 1
 
 	# IPv4 firewall rules
 	iptables -t nat -N shadowsocks_pre
@@ -74,22 +91,21 @@ start()
 		iptables -t nat -A shadowsocks_pre -d 127.0.0.0/8 -j RETURN
 		iptables -t nat -A shadowsocks_pre -d 224.0.0.0/3 -j RETURN
 	}
-	iptables -t nat -A shadowsocks_pre -d $ss_server_addr -j RETURN
-	case "$ss_proxy_mode" in
+	iptables -t nat -A shadowsocks_pre -d $vt_server_addr -j RETURN
+	case "$vt_proxy_mode" in
 		G) : ;;
 		S)
-			iptables -t nat -A shadowsocks_pre -m set --match-set $ss_np_ipset dst -j RETURN
+			iptables -t nat -A shadowsocks_pre -m set --match-set $vt_np_ipset dst -j RETURN
 			;;
 		M)
-			ipset create gfwlist hash:ip maxelem 65536
-			iptables -t nat -A shadowsocks_pre -m set ! --match-set gfwlist dst -j RETURN
-			iptables -t nat -A shadowsocks_pre -m set --match-set $ss_np_ipset dst -j RETURN
+			ipset create $vt_gfwlist hash:ip maxelem 65536 2>/dev/null
+			iptables -t nat -A shadowsocks_pre -m set ! --match-set $vt_gfwlist dst -j RETURN
+			iptables -t nat -A shadowsocks_pre -m set --match-set $vt_np_ipset dst -j RETURN
 			;;
 		V)
-			ss_np_ipset=""
-			ss_gfwlist="unblock-youku"
-			ipset create gfwlist hash:ip maxelem 65536
-			iptables -t nat -A shadowsocks_pre -m set ! --match-set gfwlist dst -j RETURN
+			vt_np_ipset=""
+			ipset create $vt_gfwlist hash:ip maxelem 65536 2>/dev/null
+			iptables -t nat -A shadowsocks_pre -m set ! --match-set $vt_gfwlist dst -j RETURN
 			;;
 	esac
 	local subnet
@@ -99,82 +115,95 @@ start()
 	iptables -t nat -I PREROUTING -p tcp -j shadowsocks_pre
 
 	# -----------------------------------------------------------------
-	###### dnsmasq main configuration ######
 	mkdir -p /var/etc/dnsmasq-go.d
-	cat > /var/etc/dnsmasq-go.conf <<EOF
-conf-dir=/var/etc/dnsmasq-go.d
-EOF
-	[ -f /tmp/resolv.conf.auto ] && echo "resolv-file=/tmp/resolv.conf.auto" >> /var/etc/dnsmasq-go.conf
-
-	# -----------------------------------------------------------------
 	###### Anti-pollution configuration ######
-	if [ -n "$ss_safe_dns" ]; then
-		if [ "$ss_safe_dns_tcp" = 1 ]; then
-			start_pdnsd "$ss_safe_dns"
+	if [ -n "$vt_safe_dns" ]; then
+		if [ "$vt_safe_dns_tcp" = 1 ]; then
+			start_pdnsd "$vt_safe_dns"
 			awk -vs="127.0.0.1#$PDNSD_LOCAL_PORT" '!/^$/&&!/^#/{printf("server=/%s/%s\n",$0,s)}' \
-				/etc/gfwlist/$ss_gfwlist > /var/etc/dnsmasq-go.d/01-pollution.conf
+				/etc/gfwlist/$vt_gfwlist > /var/etc/dnsmasq-go.d/01-pollution.conf
 		else
-			awk -vs="$ss_safe_dns#$ss_safe_dns_port" '!/^$/&&!/^#/{printf("server=/%s/%s\n",$0,s)}' \
-				/etc/gfwlist/$ss_gfwlist > /var/etc/dnsmasq-go.d/01-pollution.conf
+			awk -vs="$vt_safe_dns#$vt_safe_dns_port" '!/^$/&&!/^#/{printf("server=/%s/%s\n",$0,s)}' \
+				/etc/gfwlist/$vt_gfwlist > /var/etc/dnsmasq-go.d/01-pollution.conf
 		fi
 	else
 		echo "WARNING: Not using secure DNS, DNS resolution might be polluted if you are in China."
 	fi
 
-	# -----------------------------------------------------------------
 	###### dnsmasq-to-ipset configuration ######
-	case "$ss_proxy_mode" in
+	case "$vt_proxy_mode" in
 		M|V)
-			awk '!/^$/&&!/^#/{printf("ipset=/%s/gfwlist\n",$0)}' \
-				/etc/gfwlist/$ss_gfwlist > /var/etc/dnsmasq-go.d/02-ipset.conf
+			awk '!/^$/&&!/^#/{printf("ipset=/%s/'"$vt_gfwlist"'\n",$0)}' \
+				/etc/gfwlist/$vt_gfwlist > /var/etc/dnsmasq-go.d/02-ipset.conf
 			;;
 	esac
 
 	# -----------------------------------------------------------------
-	###### Start dnsmasq service ######
+	###### Restart main 'dnsmasq' service if needed ######
 	if ls /var/etc/dnsmasq-go.d/* >/dev/null 2>&1; then
-		dnsmasq -C /var/etc/dnsmasq-go.conf -p $DNSMASQ_PORT -x $DNSMASQ_PIDFILE || return 1
+		mkdir -p /tmp/dnsmasq.d
+		cat > /tmp/dnsmasq.d/dnsmasq-go.conf <<EOF
+conf-dir=/var/etc/dnsmasq-go.d
+EOF
+		/etc/init.d/dnsmasq restart
 
-		# IPv4 firewall rules
-		iptables -t nat -N dnsmasq_go_pre
-		iptables -t nat -F dnsmasq_go_pre
-		iptables -t nat -A dnsmasq_go_pre -p udp ! --dport 53 -j RETURN
-		local loc_addr
-		for loc_addr in $local_addresses; do
-			iptables -t nat -A dnsmasq_go_pre -d $loc_addr -p udp -j REDIRECT --to $DNSMASQ_PORT
+		# Check if DNS service was really started
+		local dnsmasq_ok=N
+		local i
+		for i in 0 1 2 3 4 5 6 7; do
+			sleep 1
+			local dnsmasq_pid=`cat /var/run/dnsmasq.pid 2>/dev/null || cat /var/run/dnsmasq/dnsmasq.pid 2>/dev/null`
+			if [ -n "$dnsmasq_pid" ]; then
+				if kill -0 "$dnsmasq_pid" 2>/dev/null; then
+					dnsmasq_ok=Y
+					break
+				fi
+			fi
 		done
-		iptables -t nat -I PREROUTING -p udp -j dnsmasq_go_pre
+		if [ "$dnsmasq_ok" != Y ]; then
+			echo "WARNING: Attached dnsmasq rules will cause the service startup failure. Removed those configurations."
+			rm -f /tmp/dnsmasq.d/dnsmasq-go.conf
+			/etc/init.d/dnsmasq restart
+		fi
 	fi
 
 }
 
 stop()
 {
-	if iptables -t nat -F dnsmasq_go_pre 2>/dev/null; then
-		while iptables -t nat -D PREROUTING -p udp -j dnsmasq_go_pre 2>/dev/null; do :; done
-		iptables -t nat -X dnsmasq_go_pre
-	fi
+	local vt_proxy_mode=`uci get minivtun.@minivtun[0].proxy_mode`
+	local vt_gfwlist=`__gfwlist_by_mode $vt_proxy_mode`
 
-	if [ -f $DNSMASQ_PIDFILE ]; then
-		kill -9 `cat $DNSMASQ_PIDFILE`
-		rm -f $DNSMASQ_PIDFILE
-	fi
-	rm -f /var/etc/dnsmasq-go.conf
+	# -----------------------------------------------------------------
 	rm -rf /var/etc/dnsmasq-go.d
+	if [ -f /tmp/dnsmasq.d/dnsmasq-go.conf ]; then
+		rm -f /tmp/dnsmasq.d/dnsmasq-go.conf
+		/etc/init.d/dnsmasq restart
+	fi
 
 	stop_pdnsd
 
+	# -----------------------------------------------------------------
 	if iptables -t nat -F shadowsocks_pre 2>/dev/null; then
 		while iptables -t nat -D PREROUTING -p tcp -j shadowsocks_pre 2>/dev/null; do :; done
 		iptables -t nat -X shadowsocks_pre 2>/dev/null
 	fi
 
-	ipset destroy gfwlist 2>/dev/null
+	# -----------------------------------------------------------------
+	[ "$KEEP_GFWLIST" = Y ] || ipset destroy "$vt_gfwlist" 2>/dev/null
 
+	# -----------------------------------------------------------------
 	if [ -f $SS_REDIR_PIDFILE ]; then
 		kill -9 `cat $SS_REDIR_PIDFILE`
 		rm -f $SS_REDIR_PIDFILE
 	fi
+}
+
+restart()
+{
+	KEEP_GFWLIST=Y
+	stop
+	start
 }
 
 # $1: upstream DNS server
@@ -218,7 +247,7 @@ EOF
 
 	# Access TCP DNS server through Shadowsocks tunnel
 	if iptables -t nat -N pdnsd_output; then
-		iptables -t nat -A pdnsd_output -m set --match-set $ss_np_ipset dst -j RETURN
+		iptables -t nat -A pdnsd_output -m set --match-set $vt_np_ipset dst -j RETURN
 		iptables -t nat -A pdnsd_output -p tcp -j REDIRECT --to $SS_REDIR_PORT
 	fi
 	iptables -t nat -I OUTPUT -p tcp --dport 53 -j pdnsd_output
